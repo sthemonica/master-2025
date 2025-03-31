@@ -160,4 +160,10 @@ cython_debug/
 #.idea/
 
 cell_images/
-cell_images.zip
+malaria-new/
+Resultados/
+artigos/
+resnet/normal/modelos_salvos_resnet/
+swin-variations/swin-sem-optuna/modelos_salvos/
+*.pth
+*.zip
