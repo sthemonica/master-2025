@@ -167,3 +167,4 @@ resnet/normal/modelos_salvos_resnet/
 swin-variations/swin-sem-optuna/modelos_salvos/
 *.pth
 *.zip
+*.png
