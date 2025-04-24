@@ -168,3 +168,4 @@ swin-variations/swin-sem-optuna/modelos_salvos/
 *.pth
 *.zip
 *.png
+*.pptx
