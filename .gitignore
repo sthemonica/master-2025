@@ -169,3 +169,6 @@ swin-variations/swin-sem-optuna/modelos_salvos/
 *.zip
 *.png
 *.pptx
+*.bmp
+*.jpg
+*.jpeg
