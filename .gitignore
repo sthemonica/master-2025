@@ -172,3 +172,6 @@ swin-variations/swin-sem-optuna/modelos_salvos/
 *.bmp
 *.jpg
 *.jpeg
+*.nii.gz
+
+chave_gemini = AIzaSyDUafw50HHBQYD3p10nPdjlbAhiq24-OHw
