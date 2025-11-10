@@ -18,3 +18,8 @@
 
 **splits** - documentos txt com a divisão de nomes das imagens que temos
 
+**xai_resnet_fold5_jpg** - 
+
+**xai_swin_fold2_jpg** - 
+
+**xai_tcav_control** - 
