@@ -1,3 +1,6 @@
+## Divisão das pastas que eu tenho de imagens
+
+
 **annot_dir_dani** - anotações feitas pela Dani.
 
 **annot_dir_cintia** - anotações em NIfTI feita pela Cintia, Biomédica

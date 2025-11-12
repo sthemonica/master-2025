@@ -26,8 +26,8 @@ from captum.attr import (
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-VAL_DIR = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\3-Datasets\img-lcm\img_dir_annot_jpg\val"
-OUTPUT_DIR = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\3-Datasets\img-lcm\xai_resnet_fold5_jpg"
+VAL_DIR = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\3-Datasets\img-lcm\img_dir_annot_nii\val"
+OUTPUT_DIR = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\3-Datasets\img-lcm\xai_resnet_fold5_nii"
 
 # ajuste se o caminho do checkpoint for diferente:
 RESNET_CKPT_PATH = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\4-redes\2.resnet\normal\modelos_salvos_resnet\resnet_fold5.pth"

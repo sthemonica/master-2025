@@ -25,7 +25,7 @@ from captum.attr import (
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-VAL_DIR = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\3-Datasets\img-lcm\img_dir_annot_nii\val"
+VAL_DIR = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\3-Datasets\img-lcm\img_dir_annot_\val"
 OUTPUT_DIR = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\3-Datasets\img-lcm\xai_swin_fold2_nii"
 
 # SWIN_CKPT_PATH = (
