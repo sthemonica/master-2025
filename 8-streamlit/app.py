@@ -1,7 +1,7 @@
 import io
 import numpy as np
 import cv2
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import streamlit as st
 import torch
@@ -20,7 +20,7 @@ from captum.attr import (
 
 from cellpose import models as cp_models, core as cp_core
 from skimage import measure
-import pandas as pd  # <--- NOVO: para a tabela
+import pandas as pd
 
 
 # =========================================================
@@ -35,6 +35,36 @@ RESNET_CKPT_PATH = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\4-red
 SWIN_CKPT_PATH = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\4-redes\3.swin\swin-sem-optuna\modelos_salvos_swin\swin_fold2.pth"
 
 CLASS_NAMES = ["uninfected", "infected"]  # índice 0 -> uninfected, 1 -> infected
+
+
+# =========================================================
+# ESTILO / CSS
+# =========================================================
+st.markdown(
+    """
+    <style>
+    .main {
+        background-color: #fafafa;
+    }
+    .pipeline-step {
+        padding: 0.8rem 1rem;
+        border-radius: 0.8rem;
+        background-color: #ffffff;
+        border: 1px solid #e5e5e5;
+        margin-bottom: 0.8rem;
+    }
+    .pipeline-step h3 {
+        margin-bottom: 0.3rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    "<h1>🦟 Malaria XAI Pipeline</h1><h4>Cellpose ➜ Modelo ➜ XAI ➜ Reconstrução</h4>",
+    unsafe_allow_html=True,
+)
 
 
 # =========================================================
@@ -54,8 +84,10 @@ transform_gray = transforms.Compose(
     ]
 )
 
+
 def load_image_pil(uploaded_file):
     return Image.open(uploaded_file).convert("RGB")
+
 
 def tensor_from_pil_gray(pil_img):
     x = transform_gray(pil_img)
@@ -75,9 +107,6 @@ def load_resnet_model(ckpt_path: str):
     for m in model.modules():
         if isinstance(m, nn.ReLU):
             m.inplace = False
-
-    inplace_list = [m.inplace for m in model.modules() if isinstance(m, nn.ReLU)]
-    print("Algum ReLU inplace=True ainda?", any(inplace_list))
 
     model.to(DEVICE)
     model.eval()
@@ -236,13 +265,14 @@ def run_xai_heatmap(model, gradcam_obj, x, method="GradCAM", target=None):
 # =========================================================
 CELLPOSE_MODEL = None
 
+
 def get_cellpose_model():
     global CELLPOSE_MODEL
     if CELLPOSE_MODEL is None:
         gpu = cp_core.use_gpu()
         CELLPOSE_MODEL = cp_models.CellposeModel(
             gpu=gpu,
-            model_type="cyto2"
+            model_type="cyto2",
         )
         print(f"Cellpose inicializado (gpu={gpu})")
     return CELLPOSE_MODEL
@@ -273,11 +303,13 @@ def run_cellpose_and_crop(image_pil, min_area=80, max_cells=150):
         crop = image_pil.crop((x0, y0, x1, y1))
         crop_224 = crop.resize((224, 224))
 
-        crops.append({
-            "crop": crop_224,
-            "bbox": (y0, x0, y1, x1),
-            "label": reg.label
-        })
+        crops.append(
+            {
+                "crop": crop_224,
+                "bbox": (y0, x0, y1, x1),
+                "label": reg.label,
+            }
+        )
 
         if len(crops) >= max_cells:
             break
@@ -310,7 +342,7 @@ def reconstruct_full_heatmap(original_pil, cells_with_heatmaps):
         heat_resized = cv2.resize(heat, (w_box, h_box))
         heat_canvas[y0:y1, x0:x1] = np.maximum(
             heat_canvas[y0:y1, x0:x1],
-            heat_resized
+            heat_resized,
         )
 
     if heat_canvas.max() > 0:
@@ -338,94 +370,125 @@ if "cells_with_heatmaps" not in st.session_state:
     st.session_state.cells_with_heatmaps = None
 if "mask_viz" not in st.session_state:
     st.session_state.mask_viz = None
+if "df_results" not in st.session_state:
+    st.session_state.df_results = None
+if "overlay_img" not in st.session_state:
+    st.session_state.overlay_img = None
+if "model" not in st.session_state:
+    st.session_state.model = None
+if "gradcam_obj" not in st.session_state:
+    st.session_state.gradcam_obj = None
+if "current_model_key" not in st.session_state:
+    st.session_state.current_model_key = None
+if "diagnosis_text" not in st.session_state:
+    st.session_state.diagnosis_text = None
+if "diagnosis_img" not in st.session_state:
+    st.session_state.diagnosis_img = None
 
-st.title("🦟 Malaria XAI Pipeline - Cellpose + ResNet/Swin + XAI")
 
-st.sidebar.header("Configurações")
+# =========================================================
+# SIDEBAR – CONFIGURAÇÃO DA PIPELINE
+# =========================================================
+st.sidebar.header("⚙️ Configurações da pipeline")
 
 uploaded_img = st.sidebar.file_uploader(
-    "Envie uma imagem (BMP/JPG/PNG)",
-    type=["bmp", "jpg", "jpeg", "png"]
+    "1) Envie uma imagem (BMP/JPG/PNG)",
+    type=["bmp", "jpg", "jpeg", "png"],
 )
 
-# --------------------------
-# Exibir imagem original
-# --------------------------
+st.sidebar.markdown("---")
+st.sidebar.subheader("2) Modelo de classificação")
+
+model_option = st.sidebar.selectbox(
+    "Escolha um modelo pré-definido",
+    ["ResNet50 fold5", "Swin-T fold2"],
+)
+
+use_custom_model = st.sidebar.checkbox("Ou enviar um modelo .pth customizado")
+custom_model_file = None
+base_model_for_custom = None
+
+if use_custom_model:
+    custom_model_file = st.sidebar.file_uploader(
+        "Envie o arquivo .pth do modelo",
+        type=["pth"],
+    )
+    base_model_for_custom = st.sidebar.selectbox(
+        "Modelo base do .pth",
+        ["ResNet50", "Swin-T"],
+    )
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("3) Método de XAI")
+
+xai_method = st.sidebar.selectbox(
+    "Selecione o método de XAI",
+    ["GradCAM", "Integrated Gradients", "Occlusion"],
+)
+
+st.sidebar.markdown("---")
+run_pipeline = st.sidebar.button("🚀 Rodar pipeline completa")
+
+
+# =========================================================
+# MAIN – EXECUÇÃO E RESULTADOS
+# =========================================================
 if uploaded_img is not None:
     original_img = load_image_pil(uploaded_img)
-    st.subheader("Imagem original")
-    st.image(original_img, use_container_width=True)
 
-    if st.button("Rodar Cellpose e recortar células (224x224)"):
-        with st.spinner("Rodando Cellpose e gerando crops..."):
+    st.markdown(
+        '<div class="pipeline-step"><h3>🖼️ Imagem de entrada</h3></div>',
+        unsafe_allow_html=True,
+    )
+    st.image(original_img, caption="Imagem original", use_container_width=True)
+
+    if run_pipeline:
+        if uploaded_img is None:
+            st.error("Por favor, envie uma imagem antes de rodar a pipeline.")
+        elif use_custom_model and custom_model_file is None:
+            st.error("Você marcou modelo customizado mas não enviou o arquivo .pth.")
+        else:
+            # Barra principal
+            pipeline_bar = st.progress(0.0)
+            pipeline_status = st.empty()
+
+            # ----------------------------------------------------
+            # 1) CELLPOSE
+            # ----------------------------------------------------
+            pipeline_status.markdown(
+                "🔬 **Etapa 1/4:** Segmentando células com Cellpose..."
+            )
+            pipeline_bar.progress(0.10)
+
             cells, mask_viz = run_cellpose_and_crop(original_img)
             st.session_state.cells = cells
             st.session_state.mask_viz = mask_viz
-        st.success(f"{len(st.session_state.cells)} células geradas!")
 
-# --------------------------
-# Mostrar máscara Cellpose
-# --------------------------
-if st.session_state.mask_viz is not None:
-    st.subheader("Máscara gerada pelo Cellpose (viz simples)")
-    st.image(st.session_state.mask_viz, use_container_width=True)
+            pipeline_bar.progress(0.25)
+            pipeline_status.markdown(
+                f"🔬 **Etapa 1/4 concluída:** {len(cells)} células detectadas."
+            )
 
-# --------------------------
-# Mostrar células
-# --------------------------
-if st.session_state.cells is not None:
-    st.subheader("Células detectadas (crops 224x224)")
-    cols = st.columns(4)
-    for i, cell in enumerate(st.session_state.cells):
-        with cols[i % 4]:
-            st.image(cell["crop"], caption=f"Célula {i}", use_container_width=True)
+            # ----------------------------------------------------
+            # 2) CARREGAR MODELO
+            # ----------------------------------------------------
+            pipeline_status.markdown(
+                "🧠 **Etapa 2/4:** Carregando modelo de classificação..."
+            )
+            pipeline_bar.progress(0.35)
 
-    st.markdown("---")
+            # Define a chave interna do modelo
+            if use_custom_model:
+                model_key = f"custom_{base_model_for_custom}_{custom_model_file.name}"
+            else:
+                model_key = f"predef_{model_option}"
 
-    # --------------------------
-    # Escolha de modelo
-    # --------------------------
-    st.sidebar.subheader("Modelo de classificação")
-
-    model_option = st.sidebar.selectbox(
-        "Escolha um modelo pré-definido",
-        ["ResNet50 fold5", "Swin-T fold2"]
-    )
-
-    use_custom_model = st.sidebar.checkbox("Quero enviar um modelo .pth")
-    custom_model_file = None
-    base_model_for_custom = None
-
-    if use_custom_model:
-        custom_model_file = st.sidebar.file_uploader(
-            "Envie o arquivo .pth do modelo",
-            type=["pth"]
-        )
-        base_model_for_custom = st.sidebar.selectbox(
-            "Modelo base do .pth",
-            ["ResNet50", "Swin-T"]
-        )
-
-    # --------------------------
-    # Escolha XAI
-    # --------------------------
-    xai_method = st.sidebar.selectbox(
-        "Método de XAI",
-        ["GradCAM", "Integrated Gradients", "Occlusion"]
-    )
-
-    # --------------------------
-    # Inferência + XAI nas células
-    # --------------------------
-    if st.button("Rodar inferência + XAI nas células"):
-        if use_custom_model and custom_model_file is None:
-            st.error("Por favor, envie o arquivo .pth do modelo customizado.")
-        else:
-            with st.spinner("Carregando modelo..."):
+            # Carrega modelo apenas se mudou
+            if st.session_state.current_model_key != model_key:
                 if use_custom_model:
                     model, gradcam_obj = load_custom_model_from_pth(
                         custom_model_file,
-                        base_model=base_model_for_custom
+                        base_model=base_model_for_custom,
                     )
                 else:
                     if model_option == "ResNet50 fold5":
@@ -433,76 +496,221 @@ if st.session_state.cells is not None:
                     else:
                         model, gradcam_obj = load_swin_model(SWIN_CKPT_PATH)
 
+                st.session_state.model = model
+                st.session_state.gradcam_obj = gradcam_obj
+                st.session_state.current_model_key = model_key
+            else:
+                model = st.session_state.model
+                gradcam_obj = st.session_state.gradcam_obj
+
+            pipeline_bar.progress(0.45)
+            pipeline_status.markdown("🧠 **Etapa 2/4 concluída:** Modelo carregado.")
+
+            # ----------------------------------------------------
+            # 3) XAI NAS CÉLULAS
+            # ----------------------------------------------------
+            pipeline_status.markdown(
+                "🌡️ **Etapa 3/4:** Aplicando XAI nas células detectadas..."
+            )
+            pipeline_bar.progress(0.50)
+
+            # Limite de células para performance
+            max_cells_xai = 40
+            cells_subset = cells[:max_cells_xai]
+
+            xai_progress = st.progress(0.0)
+            xai_status = st.empty()
+
             cells_with_heatmaps = []
-            for idx, cell in enumerate(st.session_state.cells):
-                crop_pil = cell["crop"]
-                x = tensor_from_pil_gray(crop_pil)  # [1,3,224,224]
+            rows = []
 
+            total = len(cells_subset)
+
+            for i, cell in enumerate(cells_subset):
+                xai_status.markdown(
+                    f"🌡️ Rodando XAI na célula **{i+1}/{total}**..."
+                )
                 heatmap, target_class, prob_target = run_xai_heatmap(
-                    model, gradcam_obj, x, method=xai_method
+                    model,
+                    gradcam_obj,
+                    tensor_from_pil_gray(cell["crop"]),
+                    method=xai_method,
                 )
 
-                class_name = (
-                    CLASS_NAMES[target_class]
-                    if 0 <= target_class < len(CLASS_NAMES)
-                    else f"class_{target_class}"
+                class_name = CLASS_NAMES[target_class]
+
+                cells_with_heatmaps.append(
+                    {
+                        "bbox": cell["bbox"],
+                        "heatmap": heatmap,
+                        "target_class": target_class,
+                        "class_name": class_name,
+                        "prob": prob_target,
+                        "index": i,
+                    }
                 )
 
-                cells_with_heatmaps.append({
-                    "bbox": cell["bbox"],
-                    "heatmap": heatmap,
-                    "target_class": target_class,
-                    "class_name": class_name,
-                    "prob": prob_target,
-                    "index": idx,
-                })
+                y0, x0, y1, x1 = cell["bbox"]
+                rows.append(
+                    {
+                        "cell_index": i,
+                        "y0": y0,
+                        "x0": x0,
+                        "y1": y1,
+                        "x1": x1,
+                        "pred_class_id": target_class,
+                        "pred_class_name": class_name,
+                        "pred_prob": prob_target,
+                    }
+                )
+
+                xai_progress.progress((i + 1) / total)
 
             st.session_state.cells_with_heatmaps = cells_with_heatmaps
-            st.success("Inferência + XAI concluídos para todas as células!")
+            st.session_state.df_results = pd.DataFrame(rows)
 
-# --------------------------
-# Reconstrução global com XAI + Tabela + Download
-# --------------------------
-if uploaded_img is not None and st.session_state.cells_with_heatmaps is not None:
-    st.markdown("---")
-    st.subheader("Reconstrução da imagem com XAI sobreposto")
+            pipeline_bar.progress(0.75)
+            pipeline_status.markdown(
+                "🌡️ **Etapa 3/4 concluída:** XAI aplicado nas células."
+            )
 
-    original_img = load_image_pil(uploaded_img)
-    overlay_img = reconstruct_full_heatmap(original_img, st.session_state.cells_with_heatmaps)
+            # ----------------------------------------------------
+            # 4) RECONSTRUÇÃO
+            # ----------------------------------------------------
+            pipeline_status.markdown(
+                "🧩 **Etapa 4/4:** Reconstruindo imagem com XAI..."
+            )
+            pipeline_bar.progress(0.85)
 
+            overlay_img = reconstruct_full_heatmap(original_img, cells_with_heatmaps)
+            st.session_state.overlay_img = overlay_img
+
+            # ---- NOVO: diagnóstico da amostra com base no df_results ----
+            df = st.session_state.df_results
+            has_infected = df["pred_class_id"].eq(1).any()
+
+            if has_infected:
+                st.session_state.diagnosis_text = (
+                    "⚠️ A amostra foi classificada como **contaminada com malária**. "
+                    "Pelo menos uma célula foi identificada como infectada pelo modelo."
+                )
+
+                img_diag = original_img.convert("RGB").copy()
+                draw = ImageDraw.Draw(img_diag)
+
+                for row in df.itertuples():
+                    if row.pred_class_id == 1:
+                        y0, x0, y1, x1 = (
+                            int(row.y0),
+                            int(row.x0),
+                            int(row.y1),
+                            int(row.x1),
+                        )
+                        draw.ellipse(
+                            (x0, y0, x1, y1),
+                            outline="red",
+                            width=4,
+                        )
+
+                st.session_state.diagnosis_img = img_diag
+            else:
+                st.session_state.diagnosis_text = (
+                    "✅ A amostra foi classificada como **não infectada**. "
+                    "Nenhuma célula foi identificada como alterada pelo modelo."
+                )
+                st.session_state.diagnosis_img = original_img
+
+            pipeline_bar.progress(1.0)
+            pipeline_status.markdown("✅ **Pipeline concluída com sucesso!**")
+
+
+# =========================================================
+# VISUALIZAÇÃO DOS RESULTADOS
+# =========================================================
+if st.session_state.mask_viz is not None:
+    st.markdown(
+        '<div class="pipeline-step"><h3>🧬 Máscara do Cellpose</h3></div>',
+        unsafe_allow_html=True,
+    )
+    st.image(
+        st.session_state.mask_viz,
+        caption="Máscara gerada pelo Cellpose",
+        use_container_width=True,
+    )
+
+if st.session_state.cells is not None:
+    st.markdown(
+        '<div class="pipeline-step"><h3>🧪 Células detectadas (crops 224×224)</h3></div>',
+        unsafe_allow_html=True,
+    )
+    max_show = min(16, len(st.session_state.cells))
+    cols = st.columns(4)
+    for i in range(max_show):
+        with cols[i % 4]:
+            st.image(
+                st.session_state.cells[i]["crop"],
+                caption=f"Célula {i}",
+                use_container_width=True,
+            )
+    if len(st.session_state.cells) > max_show:
+        st.caption(
+            f"... e mais {len(st.session_state.cells) - max_show} células não exibidas aqui."
+        )
+
+if st.session_state.overlay_img is not None:
+    st.markdown(
+        '<div class="pipeline-step"><h3>🌡️ Reconstrução com XAI sobreposto</h3></div>',
+        unsafe_allow_html=True,
+    )
     col1, col2 = st.columns(2)
     with col1:
-        st.image(original_img, caption="Imagem original", use_container_width=True)
+        st.image(
+            load_image_pil(uploaded_img),
+            caption="Imagem original",
+            use_container_width=True,
+        )
     with col2:
-        st.image(overlay_img, caption="Imagem com XAI sobreposto", use_container_width=True)
+        st.image(
+            st.session_state.overlay_img,
+            caption="Imagem com XAI sobreposto",
+            use_container_width=True,
+        )
 
-    # -------- NOVO: botão de download da imagem --------
-    buf = io.BytesIO()
-    overlay_img.save(buf, format="PNG")
-    buf.seek(0)
+    buf_img = io.BytesIO()
+    st.session_state.overlay_img.save(buf_img, format="PNG")
+    buf_img.seek(0)
     st.download_button(
         label="⬇️ Baixar imagem com XAI (PNG)",
-        data=buf,
+        data=buf_img,
         file_name="xai_overlay.png",
         mime="image/png",
     )
 
-    # -------- NOVO: tabela com resultados por célula --------
-    st.subheader("Resultados por célula")
+if st.session_state.df_results is not None:
+    st.markdown(
+        '<div class="pipeline-step"><h3>📊 Resultados por célula</h3></div>',
+        unsafe_allow_html=True,
+    )
+    st.dataframe(st.session_state.df_results, use_container_width=True)
 
-    rows = []
-    for cell in st.session_state.cells_with_heatmaps:
-        y0, x0, y1, x1 = cell["bbox"]
-        rows.append({
-            "cell_index": cell.get("index", None),
-            "y0": y0,
-            "x0": x0,
-            "y1": y1,
-            "x1": x1,
-            "pred_class_id": cell["target_class"],
-            "pred_class_name": cell["class_name"],
-            "pred_prob": cell["prob"],
-        })
+    csv_bytes = st.session_state.df_results.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Baixar resultados em CSV",
+        data=csv_bytes,
+        file_name="cell_results_xai.csv",
+        mime="text/csv",
+    )
 
-    df_results = pd.DataFrame(rows)
-    st.dataframe(df_results, use_container_width=True)
+if st.session_state.diagnosis_text is not None:
+    st.markdown(
+        '<div class="pipeline-step"><h3>🧾 Conclusão da análise da amostra</h3></div>',
+        unsafe_allow_html=True,
+    )
+    st.write(st.session_state.diagnosis_text)
+
+    if st.session_state.diagnosis_img is not None:
+        st.image(
+            st.session_state.diagnosis_img,
+            caption="Células destacadas conforme classificação do modelo",
+            use_container_width=True,
+        )
