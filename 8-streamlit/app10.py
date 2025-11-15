@@ -178,7 +178,7 @@ def load_custom_model_from_pth(pth_file, base_model: str):
 
 
 # =========================================================
-# FUNÇÕES XAI (COPIADAS/ADAPTADAS DOS SEUS SCRIPTS)
+# FUNÇÕES XAI
 # =========================================================
 def explain_ig(model, x, target=None, n_steps=50, baseline=None):
     model.zero_grad()
@@ -380,9 +380,9 @@ if "df_final" not in st.session_state:
     st.session_state.df_final = None
 if "current_idx" not in st.session_state:
     st.session_state.current_idx = 0
-# NOVO: assinatura do conjunto de arquivos enviados
-if "upload_signature" not in st.session_state:
-    st.session_state.upload_signature = None
+# chave para resetar o file_uploader
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
 
 
 # =========================================================
@@ -390,29 +390,25 @@ if "upload_signature" not in st.session_state:
 # =========================================================
 st.sidebar.header("⚙️ Configurações da pipeline")
 
+# botão para limpar tudo e permitir novo upload
+if st.sidebar.button("🗑️ Remover imagens e inserir novas"):
+    st.session_state.images_info = []
+    st.session_state.df_final = None
+    st.session_state.current_idx = 0
+    st.session_state.uploader_key += 1  # força reset do file_uploader
+    st.rerun()
+
 uploaded_imgs = st.sidebar.file_uploader(
     "1) Envie até 10 imagens (BMP/JPG/PNG)",
     type=["bmp", "jpg", "jpeg", "png"],
     accept_multiple_files=True,
+    key=f"file_uploader_{st.session_state.uploader_key}",
 )
 
 # Limita a 10 imagens
 if uploaded_imgs and len(uploaded_imgs) > 10:
     st.sidebar.warning("Você enviou mais de 10 imagens. Apenas as 10 primeiras serão processadas.")
     uploaded_imgs = uploaded_imgs[:10]
-
-# --- NOVO: detectar mudança no conjunto de imagens e resetar resultados ---
-def make_signature(files):
-    return tuple(sorted([f.name for f in files])) if files else None
-
-current_sig = make_signature(uploaded_imgs)
-
-if current_sig != st.session_state.upload_signature:
-    st.session_state.upload_signature = current_sig
-    # reset de resultados da pipeline
-    st.session_state.images_info = []
-    st.session_state.df_final = None
-    st.session_state.current_idx = 0
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("2) Modelo de classificação")
