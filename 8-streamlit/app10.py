@@ -56,6 +56,16 @@ st.markdown(
     .pipeline-step h3 {
         margin-bottom: 0.3rem;
     }
+    .gallery-title {
+        text-align: center;
+        font-weight: 600;
+        margin-top: 0.5rem;
+    }
+    .img-name {
+        font-family: monospace;
+        font-size: 0.85rem;
+        color: #555;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -362,6 +372,20 @@ def reconstruct_full_heatmap(original_pil, cells_with_heatmaps):
 
 
 # =========================================================
+# SESSION STATE PARA GALERIA
+# =========================================================
+if "images_info" not in st.session_state:
+    st.session_state.images_info = []  # lista de dicts com resultados por imagem
+if "df_final" not in st.session_state:
+    st.session_state.df_final = None
+if "current_idx" not in st.session_state:
+    st.session_state.current_idx = 0
+# NOVO: assinatura do conjunto de arquivos enviados
+if "upload_signature" not in st.session_state:
+    st.session_state.upload_signature = None
+
+
+# =========================================================
 # SIDEBAR – CONFIGURAÇÃO DA PIPELINE
 # =========================================================
 st.sidebar.header("⚙️ Configurações da pipeline")
@@ -376,6 +400,19 @@ uploaded_imgs = st.sidebar.file_uploader(
 if uploaded_imgs and len(uploaded_imgs) > 10:
     st.sidebar.warning("Você enviou mais de 10 imagens. Apenas as 10 primeiras serão processadas.")
     uploaded_imgs = uploaded_imgs[:10]
+
+# --- NOVO: detectar mudança no conjunto de imagens e resetar resultados ---
+def make_signature(files):
+    return tuple(sorted([f.name for f in files])) if files else None
+
+current_sig = make_signature(uploaded_imgs)
+
+if current_sig != st.session_state.upload_signature:
+    st.session_state.upload_signature = current_sig
+    # reset de resultados da pipeline
+    st.session_state.images_info = []
+    st.session_state.df_final = None
+    st.session_state.current_idx = 0
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("2) Modelo de classificação")
@@ -412,216 +449,257 @@ run_pipeline = st.sidebar.button("🚀 Rodar pipeline completa")
 
 
 # =========================================================
-# MAIN – EXECUÇÃO E RESULTADOS (MULTI-IMAGENS)
+# MOSTRAR MINIATURAS ENQUANTO A PESSOA ESCOLHE
 # =========================================================
 if uploaded_imgs:
     st.markdown(
         '<div class="pipeline-step"><h3>🖼️ Imagens enviadas</h3></div>',
         unsafe_allow_html=True,
     )
+    cols = st.columns(5)
+    for i, img in enumerate(uploaded_imgs):
+        with cols[i % 5]:
+            st.image(load_image_pil(img), caption=img.name, use_container_width=True)
 
-    for img in uploaded_imgs:
-        st.write(f"📌 {img.name}")
-        st.image(load_image_pil(img), use_container_width=True)
 
-    if run_pipeline:
+# =========================================================
+# EXECUÇÃO DA PIPELINE (RODA UMA VEZ E GUARDA TUDO)
+# =========================================================
+if run_pipeline and uploaded_imgs:
+    if use_custom_model and custom_model_file is None:
+        st.error("Você marcou modelo customizado mas não enviou o arquivo .pth.")
+    else:
+        # limpa resultados anteriores (do lote atual)
+        st.session_state.images_info = []
+        st.session_state.df_final = None
+        st.session_state.current_idx = 0
 
-        if use_custom_model and custom_model_file is None:
-            st.error("Você marcou modelo customizado mas não enviou o arquivo .pth.")
+        total_imgs = len(uploaded_imgs)
+        geral_progress = st.progress(0.0)
+        geral_status = st.empty()
+
+        # Carrega o modelo UMA vez
+        if use_custom_model:
+            model, gradcam_obj = load_custom_model_from_pth(
+                custom_model_file, base_model_for_custom
+            )
         else:
-            total_imgs = len(uploaded_imgs)
-            geral_progress = st.progress(0.0)
-            geral_status = st.empty()
-
-            # Carrega o modelo UMA vez
-            if use_custom_model:
-                model, gradcam_obj = load_custom_model_from_pth(
-                    custom_model_file, base_model_for_custom
-                )
+            if model_option == "ResNet50 fold5":
+                model, gradcam_obj = load_resnet_model(RESNET_CKPT_PATH)
             else:
-                if model_option == "ResNet50 fold5":
-                    model, gradcam_obj = load_resnet_model(RESNET_CKPT_PATH)
-                else:
-                    model, gradcam_obj = load_swin_model(SWIN_CKPT_PATH)
+                model, gradcam_obj = load_swin_model(SWIN_CKPT_PATH)
 
-            df_lista = []  # lista com df de cada imagem
+        df_lista = []
 
-            # Loop principal: uma análise por imagem
-            for idx_img, uploaded_img in enumerate(uploaded_imgs):
+        for idx_img, uploaded_img in enumerate(uploaded_imgs):
+            nome_img = uploaded_img.name
+            geral_status.markdown(
+                f"📌 **Processando imagem {idx_img+1}/{total_imgs}:** `{nome_img}`"
+            )
 
-                nome_img = uploaded_img.name
-                original_img = load_image_pil(uploaded_img)
+            original_img = load_image_pil(uploaded_img)
 
-                st.markdown(
-                    f'<div class="pipeline-step"><h3>📄 Análise da imagem: {nome_img}</h3></div>',
-                    unsafe_allow_html=True,
-                )
-                st.image(original_img, caption="Imagem original", use_container_width=True)
+            # 1) CELLPOSE
+            cells, mask_viz = run_cellpose_and_crop(original_img)
 
-                img_bar = st.progress(0.0)
-                img_status = st.empty()
+            # 2) XAI por célula
+            max_cells_xai = 40
+            cells_subset = cells[:max_cells_xai]
 
-                # ---------------------------
-                # 1) CELLPOSE
-                # ---------------------------
-                img_status.markdown("🔬 **Etapa 1/4:** Segmentando células com Cellpose...")
-                cells, mask_viz = run_cellpose_and_crop(original_img)
-                img_bar.progress(0.25)
-                img_status.markdown(f"🔬 **Etapa 1/4 concluída:** {len(cells)} células detectadas.")
+            cells_with_heatmaps = []
+            rows = []
 
-                # ---------------------------
-                # 2) XAI por célula
-                # ---------------------------
-                img_status.markdown("🌡️ **Etapa 2/4:** Aplicando XAI nas células detectadas...")
-                max_cells_xai = 40
-                cells_subset = cells[:max_cells_xai]
-
-                cells_with_heatmaps = []
-                rows = []
-
-                total_cells = len(cells_subset)
-                cell_prog = st.progress(0.0)
-
-                for i, cell in enumerate(cells_subset):
-                    heatmap, target_class, prob_target = run_xai_heatmap(
-                        model,
-                        gradcam_obj,
-                        tensor_from_pil_gray(cell["crop"]),
-                        method=xai_method,
-                    )
-
-                    class_name = CLASS_NAMES[target_class]
-
-                    cells_with_heatmaps.append(
-                        {
-                            "bbox": cell["bbox"],
-                            "heatmap": heatmap,
-                            "target_class": target_class,
-                            "class_name": class_name,
-                            "prob": prob_target,
-                            "index": i,
-                        }
-                    )
-
-                    y0, x0, y1, x1 = cell["bbox"]
-                    rows.append(
-                        {
-                            "imagem": nome_img,
-                            "cell_index": i,
-                            "y0": y0,
-                            "x0": x0,
-                            "y1": y1,
-                            "x1": x1,
-                            "pred_class_id": target_class,
-                            "pred_class_name": class_name,
-                            "pred_prob": prob_target,
-                        }
-                    )
-
-                    cell_prog.progress((i + 1) / max(1, total_cells))
-
-                df_img = pd.DataFrame(rows)
-                df_lista.append(df_img)
-
-                img_bar.progress(0.55)
-                img_status.markdown("🌡️ **Etapa 2/4 concluída:** XAI aplicado nas células.")
-
-                # ---------------------------
-                # 3) Reconstrução
-                # ---------------------------
-                img_status.markdown("🧩 **Etapa 3/4:** Reconstruindo imagem com XAI...")
-                overlay_img = reconstruct_full_heatmap(original_img, cells_with_heatmaps)
-                img_bar.progress(0.75)
-
-                # ---------------------------
-                # 4) Diagnóstico
-                # ---------------------------
-                has_infected = df_img["pred_class_id"].eq(1).any()
-
-                if has_infected:
-                    diagnosis_text = (
-                        f"⚠️ A imagem **{nome_img}** foi classificada como "
-                        f"**contaminada com malária**. Pelo menos uma célula foi "
-                        f"identificada como infectada."
-                    )
-                    img_diag = original_img.convert("RGB").copy()
-                    draw = ImageDraw.Draw(img_diag)
-                    for row in df_img.itertuples():
-                        if row.pred_class_id == 1:
-                            draw.ellipse(
-                                (row.x0, row.y0, row.x1, row.y1),
-                                outline="red",
-                                width=4,
-                            )
-                else:
-                    diagnosis_text = (
-                        f"✅ A imagem **{nome_img}** foi classificada como "
-                        f"**não infectada**. Nenhuma célula foi identificada como alterada."
-                    )
-                    img_diag = original_img
-
-                img_bar.progress(1.0)
-                img_status.markdown("✅ **Pipeline dessa imagem concluída!**")
-
-                # ---------------------------
-                # VISUALIZAÇÃO POR IMAGEM
-                # ---------------------------
-                st.markdown("#### 🧾 Conclusão da análise")
-                st.write(diagnosis_text)
-
-                st.markdown("#### 🧬 Máscara Cellpose")
-                st.image(mask_viz, use_container_width=True)
-
-                st.markdown("#### 🌡️ Imagem com XAI sobreposto")
-                st.image(overlay_img, use_container_width=True)
-
-                st.markdown("#### 🔴 Células destacadas")
-                st.image(
-                    img_diag,
-                    caption="Células marcadas conforme classificação do modelo",
-                    use_container_width=True,
+            for i, cell in enumerate(cells_subset):
+                heatmap, target_class, prob_target = run_xai_heatmap(
+                    model,
+                    gradcam_obj,
+                    tensor_from_pil_gray(cell["crop"]),
+                    method=xai_method,
                 )
 
-                # Download imagem com XAI
-                buf_img = io.BytesIO()
-                overlay_img.save(buf_img, format="PNG")
-                buf_img.seek(0)
-                st.download_button(
-                    label=f"⬇️ Baixar imagem com XAI (PNG) – {nome_img}",
-                    data=buf_img,
-                    file_name=f"xai_overlay_{nome_img}.png",
-                    mime="image/png",
+                class_name = CLASS_NAMES[target_class]
+
+                cells_with_heatmaps.append(
+                    {
+                        "bbox": cell["bbox"],
+                        "heatmap": heatmap,
+                        "target_class": target_class,
+                        "class_name": class_name,
+                        "prob": prob_target,
+                        "index": i,
+                    }
                 )
 
-                # Tabela e CSV por imagem
-                st.markdown("#### 📊 Resultados por célula (imagem atual)")
-                st.dataframe(df_img, use_container_width=True)
-
-                csv_img_bytes = df_img.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    label=f"⬇️ Baixar CSV da imagem {nome_img}",
-                    data=csv_img_bytes,
-                    file_name=f"cell_results_{nome_img}.csv",
-                    mime="text/csv",
+                y0, x0, y1, x1 = cell["bbox"]
+                rows.append(
+                    {
+                        "imagem": nome_img,
+                        "cell_index": i,
+                        "y0": y0,
+                        "x0": x0,
+                        "y1": y1,
+                        "x1": x1,
+                        "pred_class_id": target_class,
+                        "pred_class_name": class_name,
+                        "pred_prob": prob_target,
+                    }
                 )
 
-                # Atualiza progresso geral
-                geral_progress.progress((idx_img + 1) / total_imgs)
+            df_img = pd.DataFrame(rows)
+            df_lista.append(df_img)
 
-            # =========================================================
-            # CSV FINAL UNIFICADO (todas as imagens)
-            # =========================================================
-            if df_lista:
-                df_final = pd.concat(df_lista, ignore_index=True)
-                st.markdown(
-                    '<div class="pipeline-step"><h3>📊 CSV consolidado das imagens</h3></div>',
-                    unsafe_allow_html=True,
-                )
-                st.dataframe(df_final, use_container_width=True)
+            # 3) Reconstrução
+            overlay_img = reconstruct_full_heatmap(original_img, cells_with_heatmaps)
 
-                st.download_button(
-                    "⬇️ Baixar CSV consolidado (todas as imagens)",
-                    df_final.to_csv(index=False).encode("utf-8"),
-                    file_name="resultados_multiplos_imagens.csv",
-                    mime="text/csv",
+            # 4) Diagnóstico
+            has_infected = df_img["pred_class_id"].eq(1).any()
+
+            if has_infected:
+                diagnosis_text = (
+                    f"⚠️ A imagem **{nome_img}** foi classificada como "
+                    f"**contaminada com malária**. Pelo menos uma célula foi "
+                    f"identificada como infectada."
                 )
+                img_diag = original_img.convert("RGB").copy()
+                draw = ImageDraw.Draw(img_diag)
+                for row in df_img.itertuples():
+                    if row.pred_class_id == 1:
+                        draw.ellipse(
+                            (row.x0, row.y0, row.x1, row.y1),
+                            outline="red",
+                            width=4,
+                        )
+            else:
+                diagnosis_text = (
+                    f"✅ A imagem **{nome_img}** foi classificada como "
+                    f"**não infectada**. Nenhuma célula foi identificada como alterada."
+                )
+                img_diag = original_img
+
+            # guarda tudo no session_state para a galeria
+            st.session_state.images_info.append(
+                {
+                    "name": nome_img,
+                    "original": original_img,
+                    "mask_viz": mask_viz,
+                    "overlay": overlay_img,
+                    "diagnosis_text": diagnosis_text,
+                    "diagnosis_img": img_diag,
+                    "df_img": df_img,
+                }
+            )
+
+            geral_progress.progress((idx_img + 1) / total_imgs)
+
+        # CSV consolidado
+        if df_lista:
+            st.session_state.df_final = pd.concat(df_lista, ignore_index=True)
+
+        geral_status.markdown("✅ **Pipeline concluída para todas as imagens!**")
+
+
+# =========================================================
+# GALERIA – NAVEGAÇÃO POR IMAGEM
+# =========================================================
+images_info = st.session_state.images_info
+
+if images_info:
+    n_imgs = len(images_info)
+    idx = st.session_state.current_idx
+    idx = max(0, min(idx, n_imgs - 1))  # segurança
+    st.session_state.current_idx = idx
+    info = images_info[idx]
+
+    st.markdown(
+        '<div class="pipeline-step"><h3>📽️ Galeria de resultados</h3></div>',
+        unsafe_allow_html=True,
+    )
+
+    col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
+
+    with col_nav1:
+        prev_disabled = (idx == 0)
+        if st.button("⬅️ Anterior", use_container_width=True, disabled=prev_disabled):
+            if st.session_state.current_idx > 0:
+                st.session_state.current_idx -= 1
+                st.rerun()
+
+    with col_nav3:
+        next_disabled = (idx == n_imgs - 1)
+        if st.button("Próxima ➡️", use_container_width=True, disabled=next_disabled):
+            if st.session_state.current_idx < n_imgs - 1:
+                st.session_state.current_idx += 1
+                st.rerun()
+
+    with col_nav2:
+        st.markdown(
+            f"<div class='gallery-title'>Imagem {idx+1} de {n_imgs}<br>"
+            f"<span class='img-name'>{info['name']}</span></div>",
+            unsafe_allow_html=True,
+        )
+
+    # --- VISUALIZAÇÃO DA IMAGEM ATUAL ---
+    st.markdown("### 🧾 Conclusão da análise")
+    st.write(info["diagnosis_text"])
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("#### 🖼️ Imagem original")
+        st.image(info["original"], use_container_width=True)
+
+    with col_b:
+        st.markdown("#### 🔴 Células destacadas")
+        st.image(
+            info["diagnosis_img"],
+            caption="Células marcadas conforme classificação do modelo",
+            use_container_width=True,
+        )
+
+    col_mask, col_xai = st.columns(2)
+
+    with col_mask:
+        st.markdown("#### 🧬 Máscara Cellpose")
+        st.image(info["mask_viz"], use_container_width=True)
+    with col_xai:
+        st.markdown("#### 🌡️ Imagem com XAI sobreposto")
+        st.image(info["overlay"], use_container_width=True)
+
+    # Download da imagem com XAI da imagem atual
+    buf_img = io.BytesIO()
+    info["overlay"].save(buf_img, format="PNG")
+    buf_img.seek(0)
+    st.download_button(
+        label=f"⬇️ Baixar imagem com XAI (PNG) – {info['name']}",
+        data=buf_img,
+        file_name=f"xai_overlay_{info['name']}.png",
+        mime="image/png",
+    )
+
+    # Tabela e CSV desta imagem
+    st.markdown("#### 📊 Resultados por célula (imagem atual)")
+    st.dataframe(info["df_img"], use_container_width=True)
+
+    csv_img_bytes = info["df_img"].to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label=f"⬇️ Baixar CSV da imagem {info['name']}",
+        data=csv_img_bytes,
+        file_name=f"cell_results_{info['name']}.csv",
+        mime="text/csv",
+    )
+
+# =========================================================
+# CSV FINAL CONSOLIDADO (TODAS AS IMAGENS)
+# =========================================================
+if st.session_state.df_final is not None:
+    st.markdown(
+        '<div class="pipeline-step"><h3>📊 CSV consolidado (todas as imagens)</h3></div>',
+        unsafe_allow_html=True,
+    )
+    st.dataframe(st.session_state.df_final, use_container_width=True)
+
+    st.download_button(
+        "⬇️ Baixar CSV consolidado (todas as imagens)",
+        st.session_state.df_final.to_csv(index=False).encode("utf-8"),
+        file_name="resultados_multiplos_imagens.csv",
+        mime="text/csv",
+    )
