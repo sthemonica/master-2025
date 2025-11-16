@@ -22,11 +22,11 @@ from captum.attr import (
 # =========================================================
 # CONFIGS
 # =========================================================
-st.set_page_config(page_title="MUM-XAI", layout="wide")
+st.set_page_config(page_title="🔬MUM-XAI", layout="wide")
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-RESNET_CKPT_PATH = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\4-redes\2.resnet\normal\modelos_salvos_resnet\resnet_fold5.pth"
-SWIN_CKPT_PATH = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\4-redes\3.swin\swin-sem-optuna\modelos_salvos_swin\swin_fold2.pth"
+RESNET_CKPT_PATH = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\8-streamlit\aplicativo\resnet_fold5.pth"
+SWIN_CKPT_PATH = r"C:\Users\sthem\OneDrive\Documentos\GitHub\master-2025\8-streamlit\aplicativo\swin_fold2.pth"
 # index 0 -> uninfected, index 1 -> infected
 CLASS_NAMES = ["uninfected", "infected"] 
 
@@ -117,21 +117,14 @@ st.markdown(
         margin-bottom: 1.5rem;
     ">
         <h1 style="color:#222; text-align:center; margin-bottom:0.4rem;">
-            🦟 MUM-XAI: Malaria Under Microscope Explainable AI
+            🔬MUM-XAI: Malaria Under Microscope Explainable AI
         </h1>
 
-        <h3 style="color:#555; text-align:center; margin-top:0;">
-            Cellpose ➜ Classificação ➜ XAI ➜ Reconstrução ➜ Relatórios
-        </h3>
-
-        <hr style="margin-top:1rem; margin-bottom:1rem; border: none; border-top: 1px solid #ddd;">
-
-        <p style="font-size:1.05rem; color:#444; text-align:center; max-width:850px; margin:auto;">
-            Este aplicativo permite realizar <b>detecção, segmentação e explicabilidade de células parasitadas por malária</b>
-            em imagens de microscopia.  
-            Faça upload de até <b>10 imagens</b>, selecione um modelo e gere análises completas com heatmaps,
-            GradCAM, diagnósticos automáticos e exportação de CSV.
-        </p>
+        MUM-XAI is a complete analysis pipeline for malaria detection in microscope images. The system automatically 
+        segments blood cells, classifies each one using deep-learning models, and applies explainability methods to 
+        reveal why a cell was predicted as infected or healthy. By uploading your images, you can generate clear 
+        visualizations—such as masks, heatmaps, and highlighted infected cells—and download organized reports to 
+        support research, teaching, or clinical workflow exploration.
     </div>
     """,
     unsafe_allow_html=True,
@@ -167,7 +160,7 @@ def tensor_from_pil_gray(pil_img):
 
 
 # =========================================================
-# MODELOS + GRAD-CAM
+# MODELS + GRAD-CAM
 # =========================================================
 def load_resnet_model(ckpt_path: str):
     model = resnet50(weights=None)
@@ -240,7 +233,7 @@ def load_custom_model_from_pth(pth_file, base_model: str):
 
 
 # =========================================================
-# FUNÇÕES XAI
+#  XAI FUNCTIONS
 # =========================================================
 def explain_ig(model, x, target=None, n_steps=50, baseline=None):
     model.zero_grad()
@@ -333,7 +326,7 @@ def run_xai_heatmap(model, gradcam_obj, x, method="GradCAM", target=None):
 
 
 # =========================================================
-# CELLPOSE - SEGMENTAÇÃO + CROPS 224x224
+# CELLPOSE - SEGMENTATION + CROPS 224x224
 # =========================================================
 CELLPOSE_MODEL = None
 
@@ -397,7 +390,7 @@ def run_cellpose_and_crop(image_pil, min_area=80, max_cells=150):
 
 
 # =========================================================
-# RECONSTRUÇÃO HEATMAP FULL
+#  HEATMAP FULL RECONSTRUCTION
 # =========================================================
 def reconstruct_full_heatmap(original_pil, cells_with_heatmaps):
     orig = np.array(original_pil).astype(np.float32) / 255.0
@@ -434,7 +427,7 @@ def reconstruct_full_heatmap(original_pil, cells_with_heatmaps):
 
 
 # =========================================================
-# SESSION STATE PARA GALERIA
+# SESSION STATE FOR GALERY RESULTS
 # =========================================================
 if "images_info" not in st.session_state:
     st.session_state.images_info = []  # lista de dicts com resultados por imagem
@@ -451,87 +444,73 @@ if "total_runtime" not in st.session_state:
 
 
 # =========================================================
-# SIDEBAR – CONFIGURAÇÃO DA PIPELINE
+# SIDEBAR – PIPELINE CONFIGURATIONS
 # =========================================================
-st.sidebar.header("⚙️ Configurações da pipeline")
+st.sidebar.header("⚙️ Pipeline Configurations")
 
-# botão para limpar tudo e permitir novo upload
-if st.sidebar.button("🗑️ Remover imagens e inserir novas"):
+# clear all and make new upload
+if st.sidebar.button("🗑️ Remove images and insert new ones"):
     st.session_state.images_info = []
     st.session_state.df_final = None
     st.session_state.current_idx = 0
-    st.session_state.uploader_key += 1  # força reset do file_uploader
+    st.session_state.uploader_key += 1  # new reset
     st.session_state.total_runtime = None
     st.rerun()
 
 uploaded_imgs = st.sidebar.file_uploader(
-    "1) Envie até 10 imagens (BMP/JPG/PNG)",
+    "Send until 10 imagens (BMP/JPG/PNG)",
     type=["bmp", "jpg", "jpeg", "png"],
     accept_multiple_files=True,
     key=f"file_uploader_{st.session_state.uploader_key}",
 )
 
-# Limita a 10 imagens
+# limiting to 10 images
 if uploaded_imgs and len(uploaded_imgs) > 10:
-    st.sidebar.warning("Você enviou mais de 10 imagens. Apenas as 10 primeiras serão processadas.")
+    st.sidebar.warning("You send more than 10 images. Only the first 10 will be processed.")
     uploaded_imgs = uploaded_imgs[:10]
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("2) Modelo de classificação")
+st.sidebar.subheader(" Choose the AI model")
 
 model_option = st.sidebar.selectbox(
-    "Escolha um modelo pré-definido",
-    ["ResNet50 fold5", "Swin-T fold2"],
+    "Choose the model checkpoint",
+    ["ResNet50", "Swin-T"],
 )
 
-use_custom_model = st.sidebar.checkbox("Ou enviar um modelo .pth customizado")
+use_custom_model = st.sidebar.checkbox("Send a new model .pth file")
 custom_model_file = None
 base_model_for_custom = None
 
 if use_custom_model:
     custom_model_file = st.sidebar.file_uploader(
-        "Envie o arquivo .pth do modelo",
+        "Send the .pth file",
         type=["pth"],
     )
     base_model_for_custom = st.sidebar.selectbox(
-        "Modelo base do .pth",
+        "Base model .pth",
         ["ResNet50", "Swin-T"],
     )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("3) Método de XAI")
+st.sidebar.subheader("XAI method")
 
 xai_method = st.sidebar.selectbox(
-    "Selecione o método de XAI",
+    "Select the XAI method",
     ["GradCAM", "Integrated Gradients", "Occlusion"],
 )
 
 st.sidebar.markdown("---")
-run_pipeline = st.sidebar.button("🚀 Rodar pipeline completa")
+run_pipeline = st.sidebar.button("Run the pipeline")
 
 
 # =========================================================
-# MOSTRAR MINIATURAS ENQUANTO A PESSOA ESCOLHE
-# =========================================================
-if uploaded_imgs:
-    st.markdown(
-        '<div class="pipeline-step"><h3>🖼️ Imagens enviadas</h3></div>',
-        unsafe_allow_html=True,
-    )
-    cols = st.columns(5)
-    for i, img in enumerate(uploaded_imgs):
-        with cols[i % 5]:
-            st.image(load_image_pil(img), caption=img.name, use_container_width=True)
-
-
-# =========================================================
-# EXECUÇÃO DA PIPELINE (RODA UMA VEZ E GUARDA TUDO)
+# PIPELINE EXECUTION (One time run and store in session_state)
 # =========================================================
 if run_pipeline and uploaded_imgs:
     if use_custom_model and custom_model_file is None:
-        st.error("Você marcou modelo customizado mas não enviou o arquivo .pth.")
+        st.error("You check the option fot model with .pth file, but don't send it.")
     else:
-        # limpa resultados anteriores (do lote atual)
+        # clean the preview results
         st.session_state.images_info = []
         st.session_state.df_final = None
         st.session_state.current_idx = 0
@@ -541,20 +520,20 @@ if run_pipeline and uploaded_imgs:
         geral_progress = st.progress(0.0)
         geral_status = st.empty()
 
-        # Carrega o modelo UMA vez
+        # Load the model just 1 time
         if use_custom_model:
             model, gradcam_obj = load_custom_model_from_pth(
                 custom_model_file, base_model_for_custom
             )
         else:
-            if model_option == "ResNet50 fold5":
+            if model_option == "ResNet50":
                 model, gradcam_obj = load_resnet_model(RESNET_CKPT_PATH)
             else:
                 model, gradcam_obj = load_swin_model(SWIN_CKPT_PATH)
 
         df_lista = []
 
-        # NOVO: cronômetro total
+        # timer
         if DEVICE.type == "cuda":
             torch.cuda.synchronize()
         t_total_start = time.time()
@@ -562,12 +541,12 @@ if run_pipeline and uploaded_imgs:
         for idx_img, uploaded_img in enumerate(uploaded_imgs):
             nome_img = uploaded_img.name
             geral_status.markdown(
-                f"📌 **Processando imagem {idx_img+1}/{total_imgs}:** `{nome_img}`"
+                f" **Processing image {idx_img+1}/{total_imgs}:** `{nome_img}`"
             )
 
             original_img = load_image_pil(uploaded_img)
 
-            # --- início do tempo da imagem ---
+            # --- begin the time of image ---
             if DEVICE.type == "cuda":
                 torch.cuda.synchronize()
             t_img_start = time.time()
@@ -581,7 +560,7 @@ if run_pipeline and uploaded_imgs:
                 torch.cuda.synchronize()
             t_cellpose = time.time() - t_cellpose_start
 
-            # 2) XAI por célula
+            # 2) portraits + XAI
             max_cells_xai = 40
             cells_subset = cells[:max_cells_xai]
 
@@ -635,20 +614,20 @@ if run_pipeline and uploaded_imgs:
             df_img = pd.DataFrame(rows)
             df_lista.append(df_img)
 
-            # 3) Reconstrução
+            # 3) reconstruction
             t_recon_start = time.time()
             overlay_img = reconstruct_full_heatmap(original_img, cells_with_heatmaps)
             t_recon = time.time() - t_recon_start
 
-            # 4) Diagnóstico
+            # 4) diagnosis
             t_diag_start = time.time()
             has_infected = df_img["pred_class_id"].eq(1).any()
 
             if has_infected:
                 diagnosis_text = (
-                    f"⚠️ A imagem **{nome_img}** foi classificada como "
-                    f"**contaminada com malária**. Pelo menos uma célula foi "
-                    f"identificada como infectada."
+                    f"⚠️ The image {nome_img} was classified as "
+                    f"CONTAMINATED WITH MALARIA. At least one cell was "
+                    f"identified as infected."
                 )
                 img_diag = original_img.convert("RGB").copy()
                 draw = ImageDraw.Draw(img_diag)
@@ -656,24 +635,24 @@ if run_pipeline and uploaded_imgs:
                     if row.pred_class_id == 1:
                         draw.ellipse(
                             (row.x0, row.y0, row.x1, row.y1),
-                            outline="red",
-                            width=4,
+                            outline="#26FF00",
+                            width=10,
                         )
             else:
                 diagnosis_text = (
-                    f"✅ A imagem **{nome_img}** foi classificada como "
-                    f"**não infectada**. Nenhuma célula foi identificada como alterada."
+                    f"✅ The image {nome_img} was classified as "
+                    f"UNCONTAMINATED. No cells were identified as altered."
                 )
                 img_diag = original_img
 
             t_diag = time.time() - t_diag_start
 
-            # --- tempo total da imagem ---
+            # --- TOTAL TIMER FOR IMAGE ---
             if DEVICE.type == "cuda":
                 torch.cuda.synchronize()
             t_img_total = time.time() - t_img_start
 
-            # guarda tudo no session_state para a galeria
+            # store all info in session_state
             st.session_state.images_info.append(
                 {
                     "name": nome_img,
@@ -694,87 +673,82 @@ if run_pipeline and uploaded_imgs:
 
             geral_progress.progress((idx_img + 1) / total_imgs)
 
-        # tempo total da pipeline
+        # total pipeline timer
         if DEVICE.type == "cuda":
             torch.cuda.synchronize()
         st.session_state.total_runtime = time.time() - t_total_start
 
-        # CSV consolidado
+        # final csv
         if df_lista:
             st.session_state.df_final = pd.concat(df_lista, ignore_index=True)
 
-        geral_status.markdown("✅ **Pipeline concluída para todas as imagens!**")
+        geral_status.markdown("✅ Pipeline finished! Check the results below.")
 
 
 # =========================================================
-# GALERIA – NAVEGAÇÃO POR IMAGEM (NOVO LAYOUT)
+# GALERY – IMAGE NAVIGATOR
 # =========================================================
 images_info = st.session_state.images_info
 
 if images_info:
     n_imgs = len(images_info)
     idx = st.session_state.current_idx
-    idx = max(0, min(idx, n_imgs - 1))  # segurança
+    idx = max(0, min(idx, n_imgs - 1)) 
     st.session_state.current_idx = idx
     info = images_info[idx]
 
-    # Barra de informações gerais (modelo, XAI, etc.)
+    # General informations bar (model, XAI, etc.)
     if use_custom_model and base_model_for_custom:
-        modelo_str = f"Modelo: Custom {base_model_for_custom}"
+        modelo_str = f"Model: Custom {base_model_for_custom}"
     else:
-        modelo_str = f"Modelo: {model_option}"
+        modelo_str = f"Model: {model_option}"
 
     info_bar_text = (
-        f"{modelo_str} • Método XAI: {xai_method} • "
-        f"Imagens processadas: {n_imgs}"
+        f"{modelo_str} • XAI method: {xai_method} • "
+        f"Processed images: {n_imgs}"
     )
 
-    # NOVO: tempo total e média por imagem
+    # Total time and average time per image.
     total_rt = st.session_state.get("total_runtime", None)
     if total_rt is not None and n_imgs > 0:
         media = total_rt / n_imgs
-        info_bar_text += f" • Tempo total: {total_rt:.1f}s • Média/img: {media:.2f}s"
+        info_bar_text += f" • Total time: {total_rt:.1f}s • Mean/img: {media:.2f}s"
 
     st.markdown(
         f'<div class="info-bar">{info_bar_text}</div>',
         unsafe_allow_html=True,
     )
 
-    #st.markdown(
-    #    '<div class="pipeline-step"><h3>📽️ Galeria de resultados</h3></div>',
-    #    unsafe_allow_html=True,
-    #)
-
-    # Barra com nome da imagem + navegação (↔)
+    # Bar with image name + navigation (↔)
     col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
 
     with col_nav1:
         prev_disabled = (idx == 0)
-        if st.button("⬅️ Anterior", use_container_width=True, disabled=prev_disabled):
+        if st.button("⬅️ Previous", use_container_width=True, disabled=prev_disabled):
             if st.session_state.current_idx > 0:
                 st.session_state.current_idx -= 1
                 st.rerun()
 
     with col_nav3:
         next_disabled = (idx == n_imgs - 1)
-        if st.button("Próxima ➡️", use_container_width=True, disabled=next_disabled):
+        if st.button("Next ➡️", use_container_width=True, disabled=next_disabled):
             if st.session_state.current_idx < n_imgs - 1:
                 st.session_state.current_idx += 1
                 st.rerun()
 
     with col_nav2:
         st.markdown(
-            f"<div class='gallery-title'>Imagem {idx+1} de {n_imgs}<br>"
+            f"<div class='gallery-title'>Image {idx+1} of {n_imgs}<br>"
             f"<span class='img-name'>{info['name']}</span></div>",
             unsafe_allow_html=True,
         )
 
-    # Layout principal: coluna de miniaturas + grid 2x2 de imagens
+    # Main layout: thumbnail column + 2x2 image grid
     col_thumbs, col_main = st.columns([1, 3])
 
-    # ---- Miniaturas em grade 2xN à esquerda ----
+    # ---- Miniatures in 2xN grid on the left. ----
     with col_thumbs:
-        st.markdown("#### 📂 Imagens")
+        st.markdown("#### 📂 Images")
 
         n = len(images_info)
         for start in range(0, n, 2):
@@ -788,7 +762,7 @@ if images_info:
                     use_container_width=True,
                     caption=f"{i+1}",
                 )
-                if st.button(f"Selecionar {i+1}", key=f"thumb_btn_{i}"):
+                if st.button(f"Select {i+1}", key=f"thumb_btn_{i}"):
                     st.session_state.current_idx = i
                     st.rerun()
 
@@ -801,36 +775,36 @@ if images_info:
                         use_container_width=True,
                         caption=f"{j+1}",
                     )
-                    if st.button(f"Selecionar {j+1}", key=f"thumb_btn_{j}"):
+                    if st.button(f"Select {j+1}", key=f"thumb_btn_{j}"):
                         st.session_state.current_idx = j
                         st.rerun()
 
-    # ---- Coluna direita: 2x2 (original, cellpose, XAI, células destacadas) ----
+    # ---- Right column: 2x2 (original, cellpose, XAI, highlighted cells) ----
     with col_main:
         row1_col1, row1_col2 = st.columns(2)
         row2_col1, row2_col2 = st.columns(2)
 
         with row1_col1:
-            st.markdown("#### 🖼️ Imagem original")
+            st.markdown("#### 🖼️ Original image")
             st.image(info["original"], use_container_width=True)
 
         with row1_col2:
-            st.markdown("#### 🧬 Máscara Cellpose")
+            st.markdown("#### 🧬 Cellpose Mask")
             st.image(info["mask_viz"], use_container_width=True)
 
         with row2_col1:
-            st.markdown("#### 🌡️ Imagem com XAI")
+            st.markdown("#### 🌡️ Image with XAI")
             st.image(info["overlay"], use_container_width=True)
 
         with row2_col2:
-            st.markdown("#### 🔴 Células destacadas")
+            st.markdown("#### 🔴 Highlighted cells")
             st.image(
                 info["diagnosis_img"],
-                caption="Células marcadas conforme classificação do modelo",
+                caption="Cells labeled according to model classification. Green circles indicate infected cells.",
                 use_container_width=True,
             )
 
-        # Botões de download (cellpose, XAI, células destacadas)
+        # Download buttons (cellpose, XAI, highlighted cells)
         col_dl1, col_dl2, col_dl3 = st.columns(3)
 
         # Cellpose
@@ -839,7 +813,7 @@ if images_info:
         buf_mask.seek(0)
         with col_dl1:
             st.download_button(
-                label="⬇️ Baixar imagem Cellpose (PNG)",
+                label="⬇️ Download Cellpose image (PNG)",
                 data=buf_mask,
                 file_name=f"cellpose_{info['name']}.png",
                 mime="image/png",
@@ -851,25 +825,25 @@ if images_info:
         buf_xai.seek(0)
         with col_dl2:
             st.download_button(
-                label="⬇️ Baixar imagem XAI (PNG)",
+                label="⬇️ Download XAI image (PNG)",
                 data=buf_xai,
                 file_name=f"xai_overlay_{info['name']}.png",
                 mime="image/png",
             )
 
-        # Células destacadas
+        # Highlighted cells
         buf_diag = io.BytesIO()
         info["diagnosis_img"].save(buf_diag, format="PNG")
         buf_diag.seek(0)
         with col_dl3:
             st.download_button(
-                label="⬇️ Baixar células destacadas (PNG)",
+                label="⬇️ Download highlighted cells (PNG)",
                 data=buf_diag,
                 file_name=f"cells_highlight_{info['name']}.png",
                 mime="image/png",
             )
 
-        # NOVO: caixa de resultado verde/vermelho
+        # green/red result box
         has_infected_flag = info.get("has_infected", False)
         css_class = "diagnosis-alert" if has_infected_flag else "diagnosis-ok"
         st.markdown(
@@ -877,7 +851,7 @@ if images_info:
             unsafe_allow_html=True,
         )
 
-        # NOVO: tempos da imagem atual
+        # current image times
         rt_total = info.get("runtime_sec", None)
         rt_cellpose = info.get("runtime_cellpose", None)
         rt_xai = info.get("runtime_xai", None)
@@ -888,39 +862,39 @@ if images_info:
             st.markdown(
                 f"""
                 <div class="runtime-text">
-                ⏱ <b>Tempos desta imagem</b><br>
+                ⏱ <b>Times of this image</b><br>
                 • Total: {rt_total:.2f}s<br>
                 • Cellpose: {rt_cellpose:.2f}s • XAI: {rt_xai:.2f}s<br>
-                • Reconstrução: {rt_recon:.2f}s • Diagnóstico: {rt_diag:.2f}s
+                • Reconstruction: {rt_recon:.2f}s • Diagnosis: {rt_diag:.2f}s
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-    # Tabela e CSV desta imagem (mantido)
-    st.markdown("#### 📊 Resultados por célula (imagem atual)")
+    # Table and CSV of this image
+    st.markdown("#### 📊 Results by cell (current image)")
     st.dataframe(info["df_img"], use_container_width=True)
 
     csv_img_bytes = info["df_img"].to_csv(index=False).encode("utf-8")
     st.download_button(
-        label=f"⬇️ Baixar CSV da imagem {info['name']}",
+        label=f"⬇️ Download CSV image {info['name']}",
         data=csv_img_bytes,
         file_name=f"cell_results_{info['name']}.csv",
         mime="text/csv",
     )
 
 # =========================================================
-# CSV FINAL CONSOLIDADO (TODAS AS IMAGENS)  -- MANTIDO
+# CSV FINAL CONSOLIDATED (ALL IMAGES)
 # =========================================================
 if st.session_state.df_final is not None:
     st.markdown(
-        '<div class="pipeline-step"><h3>📊 CSV consolidado (todas as imagens)</h3></div>',
+        '<div class="pipeline-step"><h3>📊 Consolidated CSV (all images)</h3></div>',
         unsafe_allow_html=True,
     )
     st.dataframe(st.session_state.df_final, use_container_width=True)
 
     st.download_button(
-        "⬇️ Baixar CSV consolidado (todas as imagens)",
+        "⬇️ Download consolidated CSV (all images)",
         st.session_state.df_final.to_csv(index=False).encode("utf-8"),
         file_name="resultados_multiplos_imagens.csv",
         mime="text/csv",
